@@ -35,6 +35,9 @@ endfunction
 
 function! s:inputreplacement()
   let c = s:getchar()
+  while c =~ '^\d\+$'
+    let c .= s:getchar()
+  endwhile
   if c == " "
     let c .= s:getchar()
   endif
@@ -139,6 +142,11 @@ function! s:wrap(string,char,type,removed,special)
   endif
   let pairs = "b()B{}r[]a<>"
   let extraspace = ""
+  let multi = 1
+  if newchar =~ '^\d\+'
+    let multi = matchstr(newchar, '^\d\+')
+    let newchar = substitute(newchar,'^\d\+','','')
+  endif
   if newchar =~ '^ '
     let newchar = strpart(newchar,1)
     let extraspace = ' '
@@ -275,6 +283,8 @@ function! s:wrap(string,char,type,removed,special)
       let keeper = strcharpart(keeper,0,strchars(keeper) - 1)
     endif
   endif
+  let before = repeat(before, multi)
+  let after = repeat(after, multi)
   if type ==# 'V'
     let before = initspaces.before
   endif
@@ -406,8 +416,18 @@ function! s:dosurround(...) " {{{1
       exe 'norm! l'
     endif
     exe 'norm! dt'.char
+  elseif char =~# '[fF]'
+    let [sfline,sfcol,mfline,mfcol,efline,efcol] = [0,0,0,0,0,0]
+    for i in range(scount) 
+      let [sfline,sfcol,mfline,mfcol,efline,efcol] = s:searchfuncpos()
+      call cursor(sfline, sfcol)
+    endfor
+    if sfline != 0
+      call cursor(mfline, mfcol)
+      norm! di(
+    endif
   else
-    exe 'norm! d'.strcount.'i'.char
+    exe 'norm d'.strcount.'i'.char
   endif
   let keeper = getreg('"')
   let okeeper = keeper " for reindent below
@@ -433,17 +453,20 @@ function! s:dosurround(...) " {{{1
   elseif char =~# '[[:punct:][:space:]]' && char !~# '[][(){}<>]'
     exe 'norm! F'.char
     exe 'norm! df'.char
+  elseif char =~# '[fF]'
+    call cursor(sfline, sfcol)
+    norm! df)
   else
     " One character backwards
     call search('\m.', 'bW')
-    exe "norm! da".char
+    exe "norm da".char
   endif
   let removed = getreg('"')
   let rem2 = substitute(removed,'\n.*','','')
   let oldhead = strpart(oldline,0,strlen(oldline)-strlen(rem2))
   let oldtail = strpart(oldline,  strlen(oldline)-strlen(rem2))
   let regtype = getregtype('"')
-  if char =~# '[\[({<T]' || spc
+  if char =~# '[\[({<TF]' || spc
     let keeper = substitute(keeper,'^\s\+','','')
     let keeper = substitute(keeper,'\s\+$','','')
   endif
@@ -510,7 +533,7 @@ function! s:opfunc(type, ...) abort " {{{1
   let reg_type = getregtype(reg)
   let type = a:type
   if a:type == "char"
-    silent exe 'norm! v`[o`]"'.reg.'y'
+    silent exe 'norm v`[o`]"'.reg.'y'
     let type = 'v'
   elseif a:type == "line"
     silent exe 'norm! `[V`]"'.reg.'y'
@@ -581,6 +604,47 @@ function! s:closematch(str) " {{{1
   else
     return ""
   endif
+endfunction " }}}1
+function! s:searchfuncpos() " {{{1
+  " Save cursor position and last visual mode
+  let ppos = getpos(".")
+  let svpos = getpos("'<")
+  let evpos = getpos("'>")
+  let pvmode = visualmode()
+
+  let [sfline,sfcol,mfline,mfcol,efline,efcol] = [0,0,0,0,0,0]
+  while 1
+    " Get surounding paren text object
+    norm! va(
+    let [ebuf,eline,ecol,eoff] = getpos(".")
+    let [sbuf,sline,scol,soff] = getpos("v")
+    execute "norm! \<esc>"
+
+    if eline == sline && ecol == scol
+      break
+    endif
+
+    call cursor(sline,scol,soff)
+    let [fline,fcol] = searchpos('\i\+\s*(','bnec')
+    if fline == sline && fcol == scol
+      let [sfline,sfcol] = searchpos('\i\+\s*(','bnc')
+      let [mfline,mfcol] = [sline,scol]
+      let [efline,efcol] = [eline,ecol]
+      break
+    elseif fline == 0 && fcol == 0
+      break
+    else
+      norm! h
+    endif
+  endwhile
+
+  " Reset cursor position and last visual mode
+  call setpos(".",ppos)
+  call setpos("'<",svpos)
+  call setpos("'>",evpos)
+  call visualmode(pvmode)
+
+  return [sfline,sfcol,mfline,mfcol,efline,efcol]
 endfunction " }}}1
 
 nnoremap <silent> <Plug>SurroundRepeat .
